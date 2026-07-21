@@ -1,0 +1,8 @@
+{
+    "uuid": "image-editor@loko.gnome",
+    "name": "Quick Image Editor",
+    "description": "Adds a panel icon to quickly open, annotate and touch up an image (crop, flip, arrows, shapes, blur/pixelate, layers, text) without complex software.",
+    "shell-version": ["45", "46", "47", "48"],
+    "url": "https://github.com/Lokoyote/image-editor",
+    "version": 1
+}
