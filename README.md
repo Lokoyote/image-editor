@@ -11,9 +11,8 @@ Crop · Flip · Rotate · Annotate · Blur/Pixelate · Layers · Text
 ![Python](https://img.shields.io/badge/python-3-3776AB)
 
 </div>
----
+
 ![Screenshot](https://github.com/Lokoyote/image-editor/blob/main/image-editor%20screenshot.png "image-editor screenshot")
----
 
 ## Why
 
