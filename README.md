@@ -156,5 +156,4 @@ actual editor), most contributions will only touch one of the two.
 
 ## License
 
-No license file yet — treat this as "ask before reusing" until one is
-added.
+GNU General Public License v3.0.
