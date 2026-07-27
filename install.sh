@@ -45,6 +45,12 @@ MODE="install"
 [ "${1:-}" = "--update" ] && MODE="update"
 [ "${1:-}" = "--uninstall" ] && MODE="uninstall"
 
+SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR=""
+if [ -n "$SCRIPT_SOURCE" ] && [ -f "$SCRIPT_SOURCE" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+fi
+
 log() { echo "$@"; }
 
 # ---------------------------------------------------------------------
@@ -191,7 +197,11 @@ get_remote_sha() {
 deploy_app() {
     local src="$1"
     mkdir -p "$INSTALL_DIR"
-    cp -f "$src/image-editor.py" "$INSTALL_DIR/"
+    if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/image-editor.py" ]; then
+        cp -f "$SCRIPT_DIR/image-editor.py" "$INSTALL_DIR/"
+    else
+        cp -f "$src/image-editor.py" "$INSTALL_DIR/"
+    fi
     rm -rf "$INSTALL_DIR/icons" "$INSTALL_DIR/appicon"
     cp -r "$src/icons" "$INSTALL_DIR/icons"
     [ -d "$src/appicon" ] && cp -r "$src/appicon" "$INSTALL_DIR/appicon"

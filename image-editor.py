@@ -1519,18 +1519,14 @@ class Canvas(Gtk.DrawingArea):
         return layer
 
     def paste_as_layer(self):
-        """Paste from the clipboard as a new layer. Checks first whether
-        the clipboard holds files copied from a file manager (Nautilus &
-        co) — if so, adds them as image layer(s), asking which ones if
-        several were copied — and only falls back to pasting raw pixel
-        data (a screenshot, a copied region...) when it doesn't."""
+        """Paste from the clipboard as a new layer.
+
+        First try textual clipboard content so files copied from a file manager
+        (for example Nautilus) can be recognized as URI lists. If that does
+        not yield usable file paths, fall back to raw pixel data (a screenshot,
+        a copied region...)."""
         clipboard = Gdk.Display.get_default().get_clipboard()
-        formats = clipboard.get_formats()
-        if formats.contain_mime_type('x-special/gnome-copied-files') or \
-                formats.contain_mime_type('text/uri-list'):
-            clipboard.read_text_async(None, self._on_paste_clipboard_text)
-        else:
-            clipboard.read_texture_async(None, self._on_paste_texture)
+        clipboard.read_text_async(None, self._on_paste_clipboard_text)
 
     def _on_paste_clipboard_text(self, clipboard, result):
         try:
@@ -1699,25 +1695,27 @@ class Canvas(Gtk.DrawingArea):
 
 # Layers panel (right-hand hierarchy of what's stacked on the image)
 
+
 class LayersPanel(Gtk.Box):
-    """Right-hand hierarchy of the layers stacked on the active image.
-    Shows what's been added — including images pasted from a file
-    manager — with a thumbnail, name, visibility toggle and a way to jump
-    to / remove a layer. Purely a view onto `canvas.layers`: call
-    refresh() whenever the layer list or selection may have changed."""
+    """Right-hand hierarchy of the document contents.
+
+    The panel shows the base image, image layers and annotation objects in a
+    simple, readable stack. Images get thumbnails and visibility controls;
+    objects get a compact type label and can be selected or removed from here.
+    Call `refresh()` whenever the active canvas or selection changes."""
 
     def __init__(self, app):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.app = app
         self._canvas = None
         self._syncing = False
-        self.set_size_request(190, -1)
+        self.set_size_request(210, -1)
         self.set_margin_top(6)
         self.set_margin_bottom(6)
         self.set_margin_start(6)
         self.set_margin_end(6)
 
-        title = Gtk.Label(label="Layers", xalign=0)
+        title = Gtk.Label(label="Contents", xalign=0)
         title.add_css_class('heading')
         self.append(title)
 
@@ -1730,67 +1728,202 @@ class LayersPanel(Gtk.Box):
         self.append(scroller)
 
         self.empty_label = Gtk.Label(
-            label="No layers yet.\nAdd an image, or paste one\ncopied from your file manager.",
+            label="No document open.\nOpen an image to see its layers\nand objects here.",
             justify=Gtk.Justification.CENTER, wrap=True)
         self.empty_label.add_css_class('dim-label')
         self.empty_label.set_margin_top(12)
         self.append(self.empty_label)
 
+    def _clear_listbox(self):
+        child = self.listbox.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self.listbox.remove(child)
+            child = nxt
+
+    @staticmethod
+    def _truncate(text, limit=32):
+        text = (text or "").replace('\\n', ' ').strip()
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)] + '…'
+
+    def _make_section_row(self, title):
+        row = Gtk.ListBoxRow()
+        row.set_selectable(False)
+        row.set_activatable(False)
+        row.set_can_focus(False)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.set_margin_top(8)
+        box.set_margin_bottom(2)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        label = Gtk.Label(label=title, xalign=0)
+        label.add_css_class('heading')
+        box.append(label)
+        row.set_child(box)
+        return row
+
+    def _make_base_row(self, canvas):
+        row = Gtk.ListBoxRow()
+        row.set_selectable(False)
+        row.set_activatable(False)
+        row.set_can_focus(False)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box.set_margin_top(4)
+        box.set_margin_bottom(4)
+        box.set_margin_start(4)
+        box.set_margin_end(4)
+
+        thumb_pb = surface_to_thumb_pixbuf(canvas.surface, 28) if canvas and canvas.surface else None
+        if thumb_pb is not None:
+            picture = Gtk.Picture.new_for_pixbuf(thumb_pb)
+            picture.set_size_request(28, 28)
+            box.append(picture)
+
+        base_name = os.path.basename(canvas.current_path) if canvas and canvas.current_path else "Untitled image"
+        label = Gtk.Label(label=f"Base image — {base_name}", xalign=0, hexpand=True)
+        label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        box.append(label)
+
+        row.set_child(box)
+        return row
+
+    def _annotation_label(self, ann):
+        t = ann['type']
+        titles = {
+            'text': 'Text',
+            'rect': 'Rectangle',
+            'circle': 'Circle',
+            'line': 'Line',
+            'arrow': 'Arrow',
+            'polygon': 'Polygon',
+        }
+        if t == 'text':
+            snippet = self._truncate(ann.get('text', ''), 34)
+            return f"{titles.get(t, t.title())}: {snippet}" if snippet else titles.get(t, t.title())
+        return titles.get(t, t.title())
+
+    def _make_image_row(self, canvas, layer):
+        row = Gtk.ListBoxRow()
+        row._item_kind = 'layer'
+        row._item_ref = layer
+
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.set_margin_top(3)
+        box.set_margin_bottom(3)
+        box.set_margin_start(4)
+        box.set_margin_end(4)
+
+        thumb_pb = surface_to_thumb_pixbuf(layer['surface'], 28)
+        if thumb_pb is not None:
+            picture = Gtk.Picture.new_for_pixbuf(thumb_pb)
+            picture.set_size_request(28, 28)
+            box.append(picture)
+
+        label = Gtk.Label(label=layer.get('name') or 'Image layer', xalign=0, hexpand=True)
+        label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        box.append(label)
+
+        vis_btn = Gtk.ToggleButton()
+        vis_btn.set_icon_name(
+            'view-reveal-symbolic' if layer.get('visible', True) else 'view-conceal-symbolic')
+        vis_btn.set_active(layer.get('visible', True))
+        vis_btn.add_css_class('flat')
+        vis_btn.set_tooltip_text("Show/hide this image")
+        vis_btn.connect('toggled', self._on_toggle_visible, layer)
+        box.append(vis_btn)
+
+        remove_btn = Gtk.Button()
+        remove_btn.set_icon_name('user-trash-symbolic')
+        remove_btn.add_css_class('flat')
+        remove_btn.set_tooltip_text("Remove this image")
+        remove_btn.connect('clicked', self._on_remove_layer, layer)
+        box.append(remove_btn)
+
+        row.set_child(box)
+        return row
+
+    def _make_object_row(self, canvas, ann):
+        row = Gtk.ListBoxRow()
+        row._item_kind = 'annotation'
+        row._item_ref = ann
+
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.set_margin_top(3)
+        box.set_margin_bottom(3)
+        box.set_margin_start(4)
+        box.set_margin_end(4)
+
+        icon_name = {
+            'text': 'insert-text-symbolic',
+            'rect': 'view-grid-symbolic',
+            'circle': 'media-record-symbolic',
+            'line': 'draw-line-symbolic',
+            'arrow': 'go-next-symbolic',
+            'polygon': 'draw-freehand-symbolic',
+        }.get(ann['type'], 'applications-graphics-symbolic')
+        try:
+            icon = Gtk.Image.new_from_icon_name(icon_name)
+            icon.set_pixel_size(20)
+            box.append(icon)
+        except Exception:
+            pass
+
+        label = Gtk.Label(label=self._annotation_label(ann), xalign=0, hexpand=True)
+        label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        box.append(label)
+
+        remove_btn = Gtk.Button()
+        remove_btn.set_icon_name('user-trash-symbolic')
+        remove_btn.add_css_class('flat')
+        remove_btn.set_tooltip_text("Remove this object")
+        remove_btn.connect('clicked', self._on_remove_object, ann)
+        box.append(remove_btn)
+
+        row.set_child(box)
+        return row
+
     def refresh(self, canvas):
         self._canvas = canvas
         self._syncing = True
         try:
-            child = self.listbox.get_first_child()
-            while child:
-                nxt = child.get_next_sibling()
-                self.listbox.remove(child)
-                child = nxt
+            self._clear_listbox()
 
-            layers = list(reversed(canvas.layers)) if canvas else []
-            self.empty_label.set_visible(not layers)
-            self.listbox.set_visible(bool(layers))
+            if not canvas:
+                self.empty_label.set_visible(True)
+                self.listbox.set_visible(False)
+                return
+
+            self.empty_label.set_visible(False)
+            self.listbox.set_visible(True)
+
+            rows = []
+            rows.append(self._make_base_row(canvas))
+
+            layers = list(reversed(canvas.layers))
+            if layers:
+                rows.append(self._make_section_row(f"Images ({len(layers)})"))
+                for layer in layers:
+                    rows.append(self._make_image_row(canvas, layer))
+
+            objects = list(reversed(canvas.annotations))
+            if objects:
+                rows.append(self._make_section_row(f"Objects ({len(objects)})"))
+                for ann in objects:
+                    rows.append(self._make_object_row(canvas, ann))
 
             selected_row = None
-            for layer in layers:
-                row = Gtk.ListBoxRow()
-                row._layer_ref = layer
-                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-                box.set_margin_top(3)
-                box.set_margin_bottom(3)
-                box.set_margin_start(4)
-                box.set_margin_end(4)
-
-                thumb_pb = surface_to_thumb_pixbuf(layer['surface'], 28)
-                if thumb_pb is not None:
-                    picture = Gtk.Picture.new_for_pixbuf(thumb_pb)
-                    picture.set_size_request(28, 28)
-                    box.append(picture)
-
-                label = Gtk.Label(label=layer.get('name') or 'Layer', xalign=0, hexpand=True)
-                label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-                box.append(label)
-
-                vis_btn = Gtk.ToggleButton()
-                vis_btn.set_icon_name(
-                    'view-reveal-symbolic' if layer.get('visible', True) else 'view-conceal-symbolic')
-                vis_btn.set_active(layer.get('visible', True))
-                vis_btn.add_css_class('flat')
-                vis_btn.set_tooltip_text("Show/hide this layer")
-                vis_btn.connect('toggled', self._on_toggle_visible, layer)
-                box.append(vis_btn)
-
-                remove_btn = Gtk.Button()
-                remove_btn.set_icon_name('user-trash-symbolic')
-                remove_btn.add_css_class('flat')
-                remove_btn.set_tooltip_text("Remove this layer")
-                remove_btn.connect('clicked', self._on_remove_layer, layer)
-                box.append(remove_btn)
-
-                row.set_child(box)
-                self.listbox.append(row)
-                if canvas and canvas.selected == ('layer', layer):
+            sel = canvas.selected
+            for row in rows:
+                ref = getattr(row, '_item_ref', None)
+                if ref is not None and sel and sel[1] is ref:
                     selected_row = row
+                    break
 
+            for row in rows:
+                self.listbox.append(row)
             self.listbox.select_row(selected_row)
         finally:
             self._syncing = False
@@ -1798,12 +1931,11 @@ class LayersPanel(Gtk.Box):
     def _on_row_selected(self, listbox, row):
         if self._syncing or not self._canvas:
             return
-        if row is None or not hasattr(row, '_layer_ref'):
+        if row is None or not hasattr(row, '_item_ref'):
             return
-        self._canvas.selected = ('layer', row._layer_ref)
+        self._canvas.selected = (row._item_kind, row._item_ref)
         self._canvas.queue_draw()
-        self.app.update_options_visibility()
-        self.app.sync_selection_controls()
+        self.app.update_status()
 
     def _on_toggle_visible(self, btn, layer):
         if self._syncing:
@@ -1824,6 +1956,17 @@ class LayersPanel(Gtk.Box):
         canvas.push_undo()
         canvas.layers.remove(layer)
         if canvas.selected == ('layer', layer):
+            canvas.selected = None
+        canvas.queue_draw()
+        self.app.update_status()
+
+    def _on_remove_object(self, btn, ann):
+        canvas = self._canvas
+        if not canvas or ann not in canvas.annotations:
+            return
+        canvas.push_undo()
+        canvas.annotations.remove(ann)
+        if canvas.selected == ('annotation', ann):
             canvas.selected = None
         canvas.queue_draw()
         self.app.update_status()
