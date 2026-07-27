@@ -233,6 +233,62 @@ def blank_surface(w, h, rgb=(1, 1, 1)):
     return surf
 
 
+def surface_to_thumb_pixbuf(surf, size=28):
+    """Small square thumbnail (letterboxed, transparent padding) for the
+    layers panel, built from a layer's cairo surface. Goes through PNG
+    bytes rather than raw ARGB32 data, since cairo's premultiplied-alpha
+    byte order doesn't map directly onto GdkPixbuf's."""
+    w, h = surf.get_width(), surf.get_height()
+    if w <= 0 or h <= 0:
+        return None
+    scale = min(size / w, size / h)
+    dw, dh = max(1, round(w * scale)), max(1, round(h * scale))
+    thumb = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+    cr = cairo.Context(thumb)
+    cr.translate((size - dw) / 2, (size - dh) / 2)
+    cr.scale(scale, scale)
+    cr.set_source_surface(surf, 0, 0)
+    cr.paint()
+    buf = BytesIO()
+    thumb.write_to_png(buf)
+    buf.seek(0)
+    try:
+        loader = GdkPixbuf.PixbufLoader()
+        loader.write(buf.getvalue())
+        loader.close()
+        return loader.get_pixbuf()
+    except GLib.Error:
+        return None
+
+
+# Image files copied from Nautilus (or another file manager) rather than
+# pasted as raw pixel data.
+FILE_MANAGER_IMAGE_EXTENSIONS = (
+    '.png', '.jpg', '.jpeg', '.bmp', '.webp', '.tiff', '.tif', '.gif')
+
+
+def parse_clipboard_file_uris(text):
+    """Turn the text payload of a `x-special/gnome-copied-files` (Nautilus,
+    Files) or `text/uri-list` (most other file managers) clipboard format
+    into a list of local paths, keeping only image files that actually
+    exist on disk. `x-special/gnome-copied-files` starts with a `copy`/`cut`
+    marker line that we simply ignore — we always copy, never move."""
+    if text is None:
+        return []
+    paths = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line in ('copy', 'cut') or line.startswith('#'):
+            continue
+        try:
+            path, _ = GLib.filename_from_uri(line)
+        except GLib.Error:
+            continue
+        if os.path.isfile(path) and path.lower().endswith(FILE_MANAGER_IMAGE_EXTENSIONS):
+            paths.append(path)
+    return paths
+
+
 def next_id_counter():
     n = 0
     while True:
@@ -540,6 +596,8 @@ class Canvas(Gtk.DrawingArea):
             cr.set_source_surface(self.surface, 0, 0)
             cr.paint()
         for layer in self.layers:
+            if not layer.get('visible', True):
+                continue
             cr.save()
             cr.translate(layer['x'], layer['y'])
             cr.scale(layer['w'] / layer['orig_w'], layer['h'] / layer['orig_h'])
@@ -626,12 +684,13 @@ class Canvas(Gtk.DrawingArea):
         self._draw_image_bounds(cr)
 
         for layer in self.layers:
-            cr.save()
-            cr.translate(layer['x'], layer['y'])
-            cr.scale(layer['w'] / layer['orig_w'], layer['h'] / layer['orig_h'])
-            cr.set_source_surface(layer['surface'], 0, 0)
-            cr.paint_with_alpha(layer['opacity'])
-            cr.restore()
+            if layer.get('visible', True):
+                cr.save()
+                cr.translate(layer['x'], layer['y'])
+                cr.scale(layer['w'] / layer['orig_w'], layer['h'] / layer['orig_h'])
+                cr.set_source_surface(layer['surface'], 0, 0)
+                cr.paint_with_alpha(layer['opacity'])
+                cr.restore()
             if self.selected == ('layer', layer):
                 self._draw_layer_selection(cr, layer)
 
@@ -941,6 +1000,8 @@ class Canvas(Gtk.DrawingArea):
             if self._point_in_annotation(ann, x, y):
                 return ('annotation', ann)
         for layer in reversed(self.layers):
+            if not layer.get('visible', True):
+                continue
             if layer['x'] <= x <= layer['x'] + layer['w'] and layer['y'] <= y <= layer['y'] + layer['h']:
                 return ('layer', layer)
         return None
@@ -1410,8 +1471,34 @@ class Canvas(Gtk.DrawingArea):
             return
         self._add_layer_from_pixbuf(pixbuf, os.path.basename(path))
 
-    def _add_layer_from_pixbuf(self, pixbuf, name):
+    def add_layers_from_paths(self, paths):
+        """Add several images at once as stacked layers — used when
+        pasting files copied from a file manager (Nautilus & co). A
+        single push_undo covers the whole batch, so Ctrl+Z undoes all of
+        them together instead of one at a time."""
+        if not paths:
+            return
         self.push_undo()
+        added = 0
+        for i, path in enumerate(paths):
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
+            except GLib.Error:
+                continue
+            self._add_layer_from_pixbuf(
+                pixbuf, os.path.basename(path), record_undo=False, offset=i * 24)
+            added += 1
+        self.app.set_active_tool('select')
+        self.queue_draw()
+        if added:
+            word = "layer" if added == 1 else "layers"
+            self.app.set_status(f"{added} {word} added from the clipboard.")
+        else:
+            self.app.set_status("Couldn't open the copied image(s).")
+
+    def _add_layer_from_pixbuf(self, pixbuf, name, record_undo=True, offset=0):
+        if record_undo:
+            self.push_undo()
         surf = surface_from_pixbuf(pixbuf)
         w, h = pixbuf.get_width(), pixbuf.get_height()
         maxw = self.width * 0.6 if self.width else w
@@ -1419,19 +1506,47 @@ class Canvas(Gtk.DrawingArea):
         dw, dh = w * scale, h * scale
         layer = {
             'id': self.next_id(), 'surface': surf, 'orig_w': w, 'orig_h': h,
-            'x': (self.width - dw) / 2, 'y': (self.height - dh) / 2,
-            'w': dw, 'h': dh, 'opacity': 1.0, 'name': name,
+            'x': (self.width - dw) / 2 + offset, 'y': (self.height - dh) / 2 + offset,
+            'w': dw, 'h': dh, 'opacity': 1.0, 'name': name, 'visible': True,
         }
         self.layers.append(layer)
         self.selected = ('layer', layer)
-        self.app.set_active_tool('select')
-        self.queue_draw()
-        self.app.set_status(f"Layer \u201c{name}\u201d added — drag to move it, "
-                             f"bottom-right corner to resize it.")
+        if record_undo:
+            self.app.set_active_tool('select')
+            self.queue_draw()
+            self.app.set_status(f"Layer \u201c{name}\u201d added — drag to move it, "
+                                 f"bottom-right corner to resize it.")
+        return layer
 
     def paste_as_layer(self):
+        """Paste from the clipboard as a new layer. Checks first whether
+        the clipboard holds files copied from a file manager (Nautilus &
+        co) — if so, adds them as image layer(s), asking which ones if
+        several were copied — and only falls back to pasting raw pixel
+        data (a screenshot, a copied region...) when it doesn't."""
         clipboard = Gdk.Display.get_default().get_clipboard()
-        clipboard.read_texture_async(None, self._on_paste_texture)
+        formats = clipboard.get_formats()
+        if formats.contain_mime_type('x-special/gnome-copied-files') or \
+                formats.contain_mime_type('text/uri-list'):
+            clipboard.read_text_async(None, self._on_paste_clipboard_text)
+        else:
+            clipboard.read_texture_async(None, self._on_paste_texture)
+
+    def _on_paste_clipboard_text(self, clipboard, result):
+        try:
+            text = clipboard.read_text_finish(result)
+        except GLib.Error:
+            text = None
+        paths = parse_clipboard_file_uris(text)
+        if not paths:
+            # Not actually usable file URIs (or none were images) — fall
+            # back to treating the clipboard as raw pixel data.
+            clipboard.read_texture_async(None, self._on_paste_texture)
+            return
+        if len(paths) == 1:
+            self.add_layers_from_paths(paths)
+        else:
+            self.app.prompt_image_selection(paths, self.add_layers_from_paths)
 
     def _on_paste_texture(self, clipboard, result):
         try:
@@ -1532,6 +1647,7 @@ class Canvas(Gtk.DrawingArea):
                 {'x': l['x'], 'y': l['y'], 'w': l['w'], 'h': l['h'],
                  'orig_w': l['orig_w'], 'orig_h': l['orig_h'],
                  'opacity': l.get('opacity', 1.0), 'name': l.get('name', ''),
+                 'visible': l.get('visible', True),
                  'png_b64': self._surface_to_b64(l['surface'])}
                 for l in self.layers
             ],
@@ -1552,6 +1668,7 @@ class Canvas(Gtk.DrawingArea):
                 'x': l['x'], 'y': l['y'], 'w': l['w'], 'h': l['h'],
                 'orig_w': l.get('orig_w', l['w']), 'orig_h': l.get('orig_h', l['h']),
                 'opacity': l.get('opacity', 1.0), 'name': l.get('name', ''),
+                'visible': l.get('visible', True),
             })
         self.annotations = [self._ann_from_json(a) for a in data.get('annotations', [])]
         self.current_path = data.get('original_path')
@@ -1578,6 +1695,138 @@ class Canvas(Gtk.DrawingArea):
             pixbuf.savev(path, fmt, [], [])
         finally:
             os.remove(tmp)
+
+
+# Layers panel (right-hand hierarchy of what's stacked on the image)
+
+class LayersPanel(Gtk.Box):
+    """Right-hand hierarchy of the layers stacked on the active image.
+    Shows what's been added — including images pasted from a file
+    manager — with a thumbnail, name, visibility toggle and a way to jump
+    to / remove a layer. Purely a view onto `canvas.layers`: call
+    refresh() whenever the layer list or selection may have changed."""
+
+    def __init__(self, app):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.app = app
+        self._canvas = None
+        self._syncing = False
+        self.set_size_request(190, -1)
+        self.set_margin_top(6)
+        self.set_margin_bottom(6)
+        self.set_margin_start(6)
+        self.set_margin_end(6)
+
+        title = Gtk.Label(label="Layers", xalign=0)
+        title.add_css_class('heading')
+        self.append(title)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.listbox = Gtk.ListBox()
+        self.listbox.add_css_class('boxed-list')
+        self.listbox.connect('row-selected', self._on_row_selected)
+        scroller.set_child(self.listbox)
+        self.append(scroller)
+
+        self.empty_label = Gtk.Label(
+            label="No layers yet.\nAdd an image, or paste one\ncopied from your file manager.",
+            justify=Gtk.Justification.CENTER, wrap=True)
+        self.empty_label.add_css_class('dim-label')
+        self.empty_label.set_margin_top(12)
+        self.append(self.empty_label)
+
+    def refresh(self, canvas):
+        self._canvas = canvas
+        self._syncing = True
+        try:
+            child = self.listbox.get_first_child()
+            while child:
+                nxt = child.get_next_sibling()
+                self.listbox.remove(child)
+                child = nxt
+
+            layers = list(reversed(canvas.layers)) if canvas else []
+            self.empty_label.set_visible(not layers)
+            self.listbox.set_visible(bool(layers))
+
+            selected_row = None
+            for layer in layers:
+                row = Gtk.ListBoxRow()
+                row._layer_ref = layer
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                box.set_margin_top(3)
+                box.set_margin_bottom(3)
+                box.set_margin_start(4)
+                box.set_margin_end(4)
+
+                thumb_pb = surface_to_thumb_pixbuf(layer['surface'], 28)
+                if thumb_pb is not None:
+                    picture = Gtk.Picture.new_for_pixbuf(thumb_pb)
+                    picture.set_size_request(28, 28)
+                    box.append(picture)
+
+                label = Gtk.Label(label=layer.get('name') or 'Layer', xalign=0, hexpand=True)
+                label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+                box.append(label)
+
+                vis_btn = Gtk.ToggleButton()
+                vis_btn.set_icon_name(
+                    'view-reveal-symbolic' if layer.get('visible', True) else 'view-conceal-symbolic')
+                vis_btn.set_active(layer.get('visible', True))
+                vis_btn.add_css_class('flat')
+                vis_btn.set_tooltip_text("Show/hide this layer")
+                vis_btn.connect('toggled', self._on_toggle_visible, layer)
+                box.append(vis_btn)
+
+                remove_btn = Gtk.Button()
+                remove_btn.set_icon_name('user-trash-symbolic')
+                remove_btn.add_css_class('flat')
+                remove_btn.set_tooltip_text("Remove this layer")
+                remove_btn.connect('clicked', self._on_remove_layer, layer)
+                box.append(remove_btn)
+
+                row.set_child(box)
+                self.listbox.append(row)
+                if canvas and canvas.selected == ('layer', layer):
+                    selected_row = row
+
+            self.listbox.select_row(selected_row)
+        finally:
+            self._syncing = False
+
+    def _on_row_selected(self, listbox, row):
+        if self._syncing or not self._canvas:
+            return
+        if row is None or not hasattr(row, '_layer_ref'):
+            return
+        self._canvas.selected = ('layer', row._layer_ref)
+        self._canvas.queue_draw()
+        self.app.update_options_visibility()
+        self.app.sync_selection_controls()
+
+    def _on_toggle_visible(self, btn, layer):
+        if self._syncing:
+            return
+        layer['visible'] = btn.get_active()
+        btn.set_icon_name(
+            'view-reveal-symbolic' if layer['visible'] else 'view-conceal-symbolic')
+        if self._canvas:
+            self._canvas.dirty = True
+            self._canvas.queue_draw()
+            self.app._update_tab_label(self.app._tab_by_canvas.get(self._canvas)) \
+                if self.app._tab_by_canvas.get(self._canvas) else None
+
+    def _on_remove_layer(self, btn, layer):
+        canvas = self._canvas
+        if not canvas or layer not in canvas.layers:
+            return
+        canvas.push_undo()
+        canvas.layers.remove(layer)
+        if canvas.selected == ('layer', layer):
+            canvas.selected = None
+        canvas.queue_draw()
+        self.app.update_status()
 
 
 # Main window
@@ -1653,6 +1902,10 @@ class EditorWindow(Gtk.ApplicationWindow):
         right.append(self.status_label)
 
         hbox.append(right)
+
+        hbox.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        self.layers_panel = LayersPanel(self)
+        hbox.append(self.layers_panel)
 
         keys = Gtk.EventControllerKey()
         keys.connect('key-pressed', self._on_window_key)
@@ -2212,6 +2465,7 @@ class EditorWindow(Gtk.ApplicationWindow):
             self.update_undo_redo()
             self.update_options_visibility()
             self._update_window_title()
+            self.layers_panel.refresh(None)
             return
         tab = self._tab_by_canvas.get(self.canvas)
         if tab:
@@ -2225,6 +2479,7 @@ class EditorWindow(Gtk.ApplicationWindow):
         self.update_undo_redo()
         self.update_options_visibility()
         self.sync_selection_controls()
+        self.layers_panel.refresh(self.canvas)
 
     def update_options_visibility(self):
         """Only show the color / fill / width / text / arrowhead / opacity
@@ -2729,6 +2984,63 @@ class EditorWindow(Gtk.ApplicationWindow):
                 else:
                     self.canvas.add_text(x, y, text)
             d.destroy()
+
+        dialog.connect('response', on_response)
+        dialog.present()
+
+    def prompt_image_selection(self, file_paths, on_confirm):
+        """Several images were found copied on the clipboard (from a file
+        manager like Nautilus). Ask which ones to actually add, in case
+        the selection there was wider than intended — all are checked by
+        default. `on_confirm(list[str])` is called with the paths that
+        stayed checked."""
+        dialog = Gtk.Dialog(title="Images Found on the Clipboard", transient_for=self, modal=True)
+        dialog.set_default_size(380, -1)
+        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
+                            "Add Selected", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.OK)
+
+        box = dialog.get_content_area()
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        box.set_spacing(8)
+
+        intro = Gtk.Label(
+            label=f"{len(file_paths)} images were copied — choose which ones to add as layers:",
+            xalign=0, wrap=True)
+        box.append(intro)
+
+        scroller = Gtk.ScrolledWindow(min_content_height=220, vexpand=True)
+        list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        scroller.set_child(list_box)
+        box.append(scroller)
+
+        checks = []
+        for path in file_paths:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            check = Gtk.CheckButton(active=True)
+            row.append(check)
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, 32, 32, True)
+                row.append(Gtk.Picture.new_for_pixbuf(pixbuf))
+            except GLib.Error:
+                pass
+            label = Gtk.Label(label=os.path.basename(path), xalign=0, hexpand=True)
+            label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+            row.append(label)
+            list_box.append(row)
+            checks.append((check, path))
+
+        def on_response(d, resp):
+            if resp == Gtk.ResponseType.OK:
+                selected = [p for check, p in checks if check.get_active()]
+                d.destroy()
+                if selected:
+                    on_confirm(selected)
+            else:
+                d.destroy()
 
         dialog.connect('response', on_response)
         dialog.present()
