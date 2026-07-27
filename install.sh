@@ -407,6 +407,16 @@ set -euo pipefail
 curl -fsSL "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$BRANCH/install.sh" | bash -s -- --update
 EOF
     chmod +x "$INSTALL_DIR/update.sh"
+
+    cat > "$INSTALL_DIR/uninstall.sh" <<EOF
+#!/usr/bin/env bash
+# Re-pulls install.sh from GitHub and runs it in --uninstall mode, so
+# you don't need to remember the original curl command to remove
+# everything (this file's own directory included).
+set -euo pipefail
+curl -fsSL "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$BRANCH/install.sh" | bash -s -- --uninstall
+EOF
+    chmod +x "$INSTALL_DIR/uninstall.sh"
 }
 
 # ---------------------------------------------------------------------
@@ -573,6 +583,7 @@ if [ "$MODE" = "install" ]; then
         echo "the app), and you'll be asked before anything is installed."
     fi
     echo "To check manually: $INSTALL_DIR/update.sh"
+    echo "To uninstall: $INSTALL_DIR/uninstall.sh"
     echo "To change these options later, just re-run this installer."
 else
     echo "Update complete."
