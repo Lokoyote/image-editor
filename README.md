@@ -38,6 +38,7 @@ as a normal standalone application with a right-click shortcut in Nautilus.
   - Optional fill / background color for shapes and text
 - Blur / pixelate an area, with adjustable intensity
 - Stack any number of images as layers — move, resize, adjust opacity
+- Keep a simple object hierarchy in the side panel: base image, image layers, and drawn objects/text are listed separately
 - Resize the canvas independently of the base image (with anchor point)
 - Undo/redo, zoom, copy/paste through the system clipboard
 - Tabs: multiple images open in a single window
@@ -66,6 +67,10 @@ GNOME Shell extension, no top-panel icon. You get:
   d'image** entry
 - a `loko-image-editor` command on your `PATH`
 - automatic checks for new versions on GitHub — see [Updating](#updating)
+
+If you run `install.sh` from a local clone, the installer now uses the
+`image-editor.py` next to it first, instead of forcing the GitHub copy.
+That keeps local edits and fixes in sync with the installer.
 
 Everything is installed under `$HOME`; no `sudo` is needed except if you
 opt in to letting the script install missing system packages for you.
@@ -146,7 +151,7 @@ open lands in a new tab of that same window.
 | Text | Click to place, double-click to edit; optional background fill |
 | Blur / Pixelate | Obscure a region (face, license plate, sensitive text…); intensity is adjustable |
 | Add Image | Stack another image as a movable, resizable, opacity-adjustable layer |
-| Paste as Layer | Paste an image from the clipboard as a new layer — works with copied image data, and also with an image file copied in a file manager (e.g. Nautilus). Greyed out automatically when there's nothing pasteable |
+| Paste as Layer | Paste an image from the clipboard as a new layer — works with copied image data, with images copied in Nautilus or another file manager, and with the usual URI/file clipboard formats. Greyed out automatically when there's nothing pasteable |
 
 Selecting an already-placed shape lets you edit its color, fill, stroke
 width (down to 0 — no border) and other properties live from the options
