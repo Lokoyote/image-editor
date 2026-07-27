@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Quick Image Editor — one-shot installer.
 #
-# Downloads the app straight from GitHub and installs it as a plain
-# standalone application (NOT as a GNOME Shell extension — no top-panel
-# icon): app grid entry, Nautilus "Open With" + right-click script, and
-# a background checker that offers to update it whenever a newer
-# version is pushed to the repo.
+# Downloads the app straight from GitHub and installs it as a standalone
+# application: app grid entry, optional Nautilus "Open With" + right-click
+# script, optional top-bar icon (GNOME Shell extension, rejected from
+# extensions.gnome.org but manageable locally via the Extensions app),
+# and an optional background checker that offers to update it whenever a
+# newer version is pushed to the repo. A graphical checklist (zenity)
+# lets you pick which of these to install.
 #
 # Usage:
 #   bash <(curl -fsSL https://raw.githubusercontent.com/Lokoyote/image-editor/main/install.sh)
@@ -35,6 +37,8 @@ APPS_DIR="$HOME/.local/share/applications"
 NAUTILUS_SCRIPTS_DIR="$HOME/.local/share/nautilus/scripts"
 DESKTOP_FILE="$APPS_DIR/${APP_ID}.desktop"
 NAUTILUS_SCRIPT="$NAUTILUS_SCRIPTS_DIR/Modifier avec l'éditeur d'image"
+EXT_DEST="$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
+OPTIONS_FILE="$STATE_DIR/options"
 
 MODE="install"
 [ "${1:-}" = "--update" ] && MODE="update"
@@ -71,6 +75,69 @@ check_dependencies() {
     else
         log "Please install the equivalent packages for your distribution (python3-gi / PyGObject, GTK4 typelib, git or curl, zenity) and re-run this script."
     fi
+}
+
+# ---------------------------------------------------------------------
+# 1b. Graphical options window (install mode only). Rejected from
+#     extensions.gnome.org, but the local Extensions app
+#     (apps.gnome.org/Extensions) manages anything dropped into
+#     ~/.local/share/gnome-shell/extensions regardless of where it
+#     came from — so the top-bar icon is offered here as an opt-in.
+#     On --update, the choices made at install time are reused
+#     silently (no dialog).
+# ---------------------------------------------------------------------
+INSTALL_TOPBAR=0
+INSTALL_NAUTILUS=1
+INSTALL_AUTOUPDATE=1
+
+load_saved_options() {
+    [ -f "$OPTIONS_FILE" ] || return 0
+    # shellcheck disable=SC1090
+    source "$OPTIONS_FILE"
+}
+
+save_options() {
+    mkdir -p "$STATE_DIR"
+    cat > "$OPTIONS_FILE" <<EOF
+INSTALL_TOPBAR=$INSTALL_TOPBAR
+INSTALL_NAUTILUS=$INSTALL_NAUTILUS
+INSTALL_AUTOUPDATE=$INSTALL_AUTOUPDATE
+EOF
+}
+
+show_install_options() {
+    if ! command -v zenity >/dev/null 2>&1; then
+        log "zenity indisponible — options par défaut (pas d'icône top bar)."
+        return 0
+    fi
+
+    local result rc
+    result=$(zenity --list --checklist \
+        --title="Quick Image Editor — options d'installation" \
+        --text="Choisissez les fonctionnalités à installer.\nTout reste modifiable plus tard en relançant ce script." \
+        --width=520 --height=280 \
+        --column="" --column="Option" --column="Description" \
+        --separator="|" \
+        FALSE  "topbar"     "Icône dans la top bar (extension GNOME Shell, via l'app Extensions)" \
+        TRUE   "nautilus"   "Clic-droit sur une image dans Nautilus > Modifier avec l'éditeur" \
+        TRUE   "autoupdate" "Vérifier les mises à jour automatiquement" \
+        2>/dev/null)
+    rc=$?
+
+    # Cancel/close = keep the defaults set above rather than aborting install.
+    [ "$rc" -ne 0 ] && return 0
+
+    INSTALL_TOPBAR=0
+    INSTALL_NAUTILUS=0
+    INSTALL_AUTOUPDATE=0
+    IFS="|" read -ra chosen <<< "$result"
+    for opt in "${chosen[@]}"; do
+        case "$opt" in
+            topbar)     INSTALL_TOPBAR=1 ;;
+            nautilus)   INSTALL_NAUTILUS=1 ;;
+            autoupdate) INSTALL_AUTOUPDATE=1 ;;
+        esac
+    done
 }
 
 # ---------------------------------------------------------------------
@@ -116,9 +183,8 @@ get_remote_sha() {
 }
 
 # ---------------------------------------------------------------------
-# 4. Deploy the app files (no extension.js / metadata.json — those
-#    belong to the old top-bar-icon extension, which we deliberately
-#    don't install here).
+# 4. Deploy the standalone app files. extension.js / metadata.json are
+#    handled separately by sync_topbar_extension, only when opted in.
 # ---------------------------------------------------------------------
 deploy_app() {
     local src="$1"
@@ -358,19 +424,39 @@ EOF
 }
 
 # ---------------------------------------------------------------------
-# 11. If the old top-bar extension is enabled, offer to turn it off —
-#     install mode only, and only if it's actually there.
+# 11. Top-bar icon extension: install/enable or remove/disable
+#     depending on the checkbox chosen in show_install_options.
+#     Self-contained copy of the repo into the extensions dir, matching
+#     the manual "git clone; cp -r" install described in the README.
 # ---------------------------------------------------------------------
-maybe_disable_topbar_extension() {
-    command -v gnome-extensions >/dev/null 2>&1 || return 0
-    if gnome-extensions list --enabled 2>/dev/null | grep -qx "$EXT_UUID"; then
-        echo
-        echo "The '$EXT_UUID' GNOME Shell extension (top-panel icon) is currently enabled."
-        read -r -p "Disable it now, since the standalone app replaces it? [O/n] " reply
-        case "$reply" in
-            [nN]*) ;;
-            *) gnome-extensions disable "$EXT_UUID" 2>/dev/null && echo "Extension disabled." ;;
-        esac
+install_topbar_extension() {
+    local src="$1"
+    rm -rf "$EXT_DEST"
+    mkdir -p "$(dirname "$EXT_DEST")"
+    cp -r "$src" "$EXT_DEST"
+    rm -rf "$EXT_DEST/.git"
+
+    if command -v gnome-extensions >/dev/null 2>&1; then
+        gnome-extensions enable "$EXT_UUID" 2>/dev/null && \
+            log "Extension activée : l'icône devrait apparaître dans la top bar." || \
+            log "Extension copiée mais pas encore activée — redémarrez GNOME Shell (déconnexion/reconnexion sur Wayland, Alt+F2 puis r sur X11) puis activez-la depuis l'app Extensions."
+    else
+        log "Extension copiée dans $EXT_DEST. Activez-la depuis l'app Extensions (gnome-extensions introuvable ici)."
+    fi
+}
+
+remove_topbar_extension() {
+    command -v gnome-extensions >/dev/null 2>&1 && \
+        gnome-extensions disable "$EXT_UUID" 2>/dev/null
+    rm -rf "$EXT_DEST"
+}
+
+sync_topbar_extension() {
+    local src="$1"
+    if [ "$INSTALL_TOPBAR" -eq 1 ]; then
+        install_topbar_extension "$src"
+    else
+        [ -d "$EXT_DEST" ] && remove_topbar_extension
     fi
 }
 
@@ -380,6 +466,13 @@ maybe_disable_topbar_extension() {
 log "== Quick Image Editor — $([ "$MODE" = "update" ] && echo "update" || echo "installer") =="
 
 [ "$MODE" = "install" ] && check_dependencies
+
+if [ "$MODE" = "install" ]; then
+    show_install_options
+    save_options
+else
+    load_saved_options
+fi
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -393,22 +486,36 @@ deploy_app "$WORKDIR/src"
 install_launcher
 install_icon
 install_desktop_entry
-install_nautilus_script
 install_update_script
-install_check_update_script
-install_autostart
+sync_topbar_extension "$WORKDIR/src"
+
+if [ "$INSTALL_NAUTILUS" -eq 1 ]; then
+    install_nautilus_script
+elif [ -f "$NAUTILUS_SCRIPT" ]; then
+    rm -f "$NAUTILUS_SCRIPT"
+fi
+
+if [ "$INSTALL_AUTOUPDATE" -eq 1 ]; then
+    install_check_update_script
+    install_autostart
+elif [ -f "$AUTOSTART_DIR/${APP_ID}.updater.desktop" ]; then
+    rm -f "$AUTOSTART_DIR/${APP_ID}.updater.desktop"
+fi
 
 if [ "$MODE" = "install" ]; then
-    maybe_disable_topbar_extension
     echo
     echo "Done! Quick Image Editor is installed as a standalone app:"
     echo "  - App grid: 'Quick Image Editor'"
-    echo "  - Nautilus: right-click an image > Open With, or > Scripts > 'Modifier avec l'éditeur d'image'"
+    [ "$INSTALL_NAUTILUS" -eq 1 ] && echo "  - Nautilus: right-click an image > Open With, or > Scripts > 'Modifier avec l'éditeur d'image'"
     echo "  - Terminal: loko-image-editor"
+    [ "$INSTALL_TOPBAR" -eq 1 ] && echo "  - Top bar: icône installée (visible depuis l'app Extensions si elle n'apparaît pas tout de suite)"
     echo
-    echo "Updates are checked automatically (at login, and each time you open"
-    echo "the app), and you'll be asked before anything is installed."
+    if [ "$INSTALL_AUTOUPDATE" -eq 1 ]; then
+        echo "Updates are checked automatically (at login, and each time you open"
+        echo "the app), and you'll be asked before anything is installed."
+    fi
     echo "To check manually: $INSTALL_DIR/update.sh"
+    echo "To change these options later, just re-run this installer."
 else
     echo "Update complete."
 fi
