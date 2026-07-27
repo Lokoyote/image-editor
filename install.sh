@@ -11,6 +11,7 @@
 #
 # Usage:
 #   bash <(curl -fsSL https://raw.githubusercontent.com/Lokoyote/image-editor/main/install.sh)
+#   bash <(curl -fsSL .../install.sh) --uninstall   # remove everything
 #
 # Re-running this script (or its --update mode, wired up automatically
 # below) is always safe.
@@ -42,6 +43,7 @@ OPTIONS_FILE="$STATE_DIR/options"
 
 MODE="install"
 [ "${1:-}" = "--update" ] && MODE="update"
+[ "${1:-}" = "--uninstall" ] && MODE="uninstall"
 
 log() { echo "$@"; }
 
@@ -461,9 +463,65 @@ sync_topbar_extension() {
 }
 
 # ---------------------------------------------------------------------
+# 12. Full uninstall: everything install.sh has ever created, whatever
+#     options were chosen at the time (topbar/nautilus/autoupdate).
+#     Nothing system-wide was ever touched, so this only removes files
+#     under $HOME.
+# ---------------------------------------------------------------------
+uninstall_all() {
+    local removed=0
+    local rm_one
+    rm_one() {
+        if [ -e "$1" ]; then
+            rm -rf -- "$1"
+            log "Removed: $1"
+            removed=1
+        fi
+    }
+
+    if command -v gnome-extensions >/dev/null 2>&1; then
+        gnome-extensions disable "$EXT_UUID" 2>/dev/null || true
+    fi
+    rm_one "$EXT_DEST"
+    rm_one "$INSTALL_DIR"
+    rm_one "$LAUNCHER"
+    rm_one "$DESKTOP_FILE"
+    rm_one "$NAUTILUS_SCRIPT"
+    rm_one "$AUTOSTART_DIR/${APP_ID}.updater.desktop"
+    rm_one "$STATE_DIR"
+
+    for size in 48 64 128 256 512; do
+        rm_one "$ICON_BASE/${size}x${size}/apps/${APP_ID}.png"
+    done
+
+    if [ "$removed" -eq 0 ]; then
+        log "Nothing found to remove — it doesn't look like this was installed."
+        return 0
+    fi
+
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$APPS_DIR" 2>/dev/null || true
+    fi
+    if command -v gtk4-update-icon-cache >/dev/null 2>&1; then
+        gtk4-update-icon-cache -f -t "$ICON_BASE" 2>/dev/null || true
+    elif command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t "$ICON_BASE" 2>/dev/null || true
+    fi
+
+    echo
+    echo "Done. Any window still open at the moment stays open, but the"
+    echo "editor is no longer registered anywhere (Open With, Scripts, app grid, top bar)."
+}
+
+# ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
-log "== Quick Image Editor — $([ "$MODE" = "update" ] && echo "update" || echo "installer") =="
+log "== Quick Image Editor — $([ "$MODE" = "update" ] && echo "update" || ([ "$MODE" = "uninstall" ] && echo "uninstall") || echo "installer") =="
+
+if [ "$MODE" = "uninstall" ]; then
+    uninstall_all
+    exit 0
+fi
 
 [ "$MODE" = "install" ] && check_dependencies
 
