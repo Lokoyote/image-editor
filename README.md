@@ -1,5 +1,4 @@
-# <img width="48" height="48" alt="org loko ImageEditor-48" src="https://github.com/user-attachments/assets/144b3512-fb26-49bc-a15c-bb86934c222f" />
- Quick Image Editor
+# <img width="48" height="48" alt="org loko ImageEditor-48" src="https://github.com/user-attachments/assets/144b3512-fb26-49bc-a15c-bb86934c222f" /> Quick Image Editor
 
 ![Python](https://img.shields.io/badge/python-3-3776AB)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
