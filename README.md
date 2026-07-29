@@ -12,7 +12,7 @@ screenshot, draw an arrow at something, or crop a photo before sending it.
 Quick Image Editor is a small GTK4 app that does exactly that, installed
 as a normal standalone application with a right-click shortcut in Nautilus.
 
-![Screenshot](https://github.com/Lokoyote/image-editor/blob/main/image-editor-sscreenshot.png "image-editor screenshot")
+![Screenshot](https://github.com/Lokoyote/image-editor/blob/main/image-editor-screenshot.png?raw=true "image-editor screenshot")
 
 ## Table of Contents
 
