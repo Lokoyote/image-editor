@@ -1,4 +1,4 @@
-# <img width="48" height="48" alt="org loko ImageEditor-48" src="https://github.com/user-attachments/assets/144b3512-fb26-49bc-a15c-bb86934c222f" /> Quick Image EditorQuick Image Editor
+# <img width="48" height="48" alt="org loko ImageEditor-48" src="https://github.com/user-attachments/assets/144b3512-fb26-49bc-a15c-bb86934c222f" /> Quick Image Editor
 
 ![Screenshot](https://raw.githubusercontent.com/Lokoyote/image-editor/refs/heads/main/image-editor-screenshot.png "image-editor screenshot")
 
