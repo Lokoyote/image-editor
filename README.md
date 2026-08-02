@@ -1,235 +1,140 @@
-# <img width="48" height="48" alt="org loko ImageEditor-48" src="https://github.com/user-attachments/assets/144b3512-fb26-49bc-a15c-bb86934c222f" /> Quick Image Editor
+# Quick Image Editor
 
-![Python](https://img.shields.io/badge/python-3-3776AB)
-![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+*[Read this in English](README.en.md)*
 
-**A lightweight, no-fuss image editor for GNOME.**
+Éditeur d'images GTK4/Python à calques multiples, conçu à l'origine comme
+application compagnon de l'extension GNOME Shell « image-editor » (ouverture
+directe d'une capture d'écran pour l'annoter), mais parfaitement utilisable
+comme éditeur d'images autonome.
 
-Crop · Flip · Rotate · Annotate · Blur/Pixelate · Layers · Text
+Un seul fichier (`image-editor.py`), pas de dépendance en dehors de ce qui
+est déjà installé sur une distribution GNOME standard.
 
-Sometimes you don't need GIMP — you need to blur a phone number in a
-screenshot, draw an arrow at something, or crop a photo before sending it.
-Quick Image Editor is a small GTK4 app that does exactly that, installed
-as a normal standalone application with a right-click shortcut in Nautilus.
+## Fonctionnalités
 
-![Screenshot](https://raw.githubusercontent.com/Lokoyote/image-editor/refs/heads/main/image-editor-screenshot.png "image-editor screenshot")
+**Image et calques**
+- Ouvrir une image / partir d'un canevas vierge / enregistrer / enregistrer sous
+- Canevas multi-calques : chaque image ajoutée (bouton « Superposer une
+  image », collage presse-papiers simple ou multiple, glisser-déposer depuis
+  un gestionnaire de fichiers) devient un calque déplaçable, redimensionnable
+  (poignées haut-gauche **et** bas-droite), avec opacité réglable
+- Le canevas s'agrandit automatiquement si l'image ajoutée est plus grande
+  que lui, pour l'accueillir à sa taille d'origine plutôt que de la réduire
+- **Calques liés** : cliquer sur l'icône maillon de deux calques les lie —
+  ils se déplacent ensemble (souris ou clavier) ; contour pointillé coloré
+  + badge sur le canevas et icône colorée dans le panneau pour les repérer
+- Recadrage (rectangle déplaçable et redimensionnable par ses 4 coins avant
+  validation), retournement horizontal/vertical, rotation 90°
+- Redimensionnement du canevas (avec choix d'un point d'ancrage)
 
-## Table of Contents
+**Annotations**
+- Flèches, lignes, rectangles, cercles/ovales, polygones, texte
+- Couleur, épaisseur de trait, remplissage
+- Bordure numérique (image ou texte) : 0 = aucune, toute valeur > 0 dessine
+  une bordure de cette épaisseur — pas de case à cocher séparée
+- Flou et pixellisation d'une zone, **non destructifs** : la zone reste un
+  calque à part entière (déplaçable, réglable en intensité), et la supprimer
+  révèle l'image d'origine en dessous
+- Retour automatique à l'outil Sélection une fois une forme/texte/recadrage/
+  flou terminé
 
-- [Features](#features)
-- [Installation](#installation)
-- [Updating](#updating)
-- [Alternative: GNOME Shell panel icon](#alternative-gnome-shell-panel-icon)
-- [Usage](#usage)
-- [Tools](#tools)
-- [Keyboard Shortcuts](#keyboard-shortcuts)
-- [Autosave & Crash Recovery](#autosave--crash-recovery)
-- [Localization](#localization)
-- [Troubleshooting](#troubleshooting)
-- [Uninstalling](#uninstalling)
-- [Contributing](#contributing)
-- [License](#license)
+**Sélection et interaction**
+- Panneau des calques (sections « Objets » et « Calques ») : visibilité,
+  réorganisation, suppression, miniatures
+- Sélectionner un calque via le panneau redonne le focus clavier au canevas
+  (flèches, Suppr, Échap fonctionnent immédiatement)
+- Clic droit sur un calque image : petit menu Copier / Coller / Dupliquer
+- Double-clic sur un texte (outil Sélection) : modifier son contenu
+- Déplacement au clavier (flèches, Maj = pas de 10 px), Suppr, Échap
+- Annuler / rétablir (pile de snapshots), zoom (molette ou pavé tactile,
+  Maj = défilement horizontal), ajustement automatique au redimensionnement
+  de la fenêtre
 
-## Features
+**Fiabilité et confort**
+- Onglets multiples, un par image ouverte, avertissement avant fermeture
+  si modifications non enregistrées
+- Sauvegarde automatique en arrière-plan + proposition de récupération après
+  un arrêt inattendu (plantage, coupure de courant)
+- Bouton d'aide (« ? ») : raccourcis clavier, fonction du clic droit,
+  subtilités de l'application
+- Interface entièrement traduite en 6 langues (français, anglais, espagnol,
+  allemand, italien, portugais), détectée automatiquement depuis la langue
+  du système (repli sur l'anglais)
 
-- Crop, flip horizontal/vertical, rotate 90°
-- Arrows, lines, rectangles, circles, polygons, text
-  - Adjustable stroke width — down to **0** for no border at all
-  - Optional fill / background color for shapes and text
-- Blur / pixelate an area, with adjustable intensity
-- Stack any number of images as layers — move, resize, adjust opacity
-- Keep a simple object hierarchy in the side panel: base image, image layers, and drawn objects/text are listed separately
-- Resize the canvas independently of the base image (with anchor point)
-- Undo/redo, zoom, copy/paste through the system clipboard
-- Tabs: multiple images open in a single window
-- Autosave with crash recovery
-- Single-instance app: re-launching brings the existing window forward
-  instead of opening a duplicate
-- Icon tooltips localized into French, English, Spanish, German, Italian
-  and Portuguese based on your system locale
+## Dépendances
 
-## Installation
+- Python 3
+- PyGObject (`gi`) avec GTK 4, GDK, GdkPixbuf, Pango
+- pycairo
 
-Run this one-liner — it downloads the app straight from this repo and
-sets everything up:
+Le tout est préinstallé sur une session GNOME standard (Ubuntu/Fedora/etc.).
+Rien à installer via pip dans le cas normal.
 
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Lokoyote/image-editor/main/install.sh)
-```
-
-This installs Quick Image Editor as a **standalone application** — no
-GNOME Shell extension, no top-panel icon. You get:
-
-- an entry named "Quick Image Editor" in the applications grid, with the
-  proper app icon
-- right-click integration in Nautilus: it shows up in **Open With** for
-  image files, and adds a one-click **Scripts ▸ Modifier avec l'éditeur
-  d'image** entry
-- a `loko-image-editor` command on your `PATH`
-- automatic checks for new versions on GitHub — see [Updating](#updating)
-
-If you run `install.sh` from a local clone, the installer now uses the
-`image-editor.py` next to it first, instead of forcing the GitHub copy.
-That keeps local edits and fixes in sync with the installer.
-
-Everything is installed under `$HOME`; no `sudo` is needed except if you
-opt in to letting the script install missing system packages for you.
-
-### Dependencies
-
-The editor needs Python 3 with PyGObject and pycairo — both ship by
-default on virtually every GNOME desktop. The installer offers to install
-them automatically via `apt` if they're missing; to do it yourself:
+## Utilisation
 
 ```bash
-sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 git curl zenity
+python3 image-editor.py [chemin_image] [--blank] [--from-screenshot]
 ```
 
-## Updating
+- Sans argument : écran vide avec un bouton « Ouvrir une image… »
+- `chemin_image` : ouvre directement ce fichier dans un nouvel onglet
+- `--blank` : ouvre un canevas vierge (1200×800 par défaut)
+- `--from-screenshot` : utilisé par l'extension GNOME Shell lors d'un
+  lancement depuis une capture d'écran — le fichier source est supprimé une
+  fois son contenu chargé en mémoire, et l'onglet reste « Sans titre » pour
+  éviter d'écraser silencieusement ce fichier temporaire
 
-The app checks GitHub for a newer commit on `main` — once at login, and
-again each time you open the editor (throttled to at most once every 6
-hours so it doesn't hammer the network). When an update is found, you're
-asked before anything changes:
+L'application est mono-instance : la relancer alors qu'elle tourne déjà
+ramène simplement la fenêtre existante au premier plan (les arguments
+passés à ce second lancement, ex. une nouvelle image, sont quand même pris
+en compte).
 
-- **Installer** — downloads and installs it right away
-- **Plus tard** — asks again at the next check
-- **Ignorer cette version** — stops asking until a further update is
-  pushed to the repo
+**Formats**
+- Ouverture : PNG, JPEG, BMP, TIFF, WEBP, GIF
+- Enregistrement : PNG, JPEG, BMP, TIFF (déduit de l'extension du fichier ;
+  PNG par défaut si l'extension est absente ou inconnue)
 
-To check manually at any time:
+## Emplacement des données
 
-```bash
-~/.local/share/loko-image-editor/update.sh
-```
+- Sauvegarde automatique / récupération après plantage :
+  `~/.cache/image-editor-loko/autosave/`
+- Préférences (dernier dossier d'enregistrement utilisé) :
+  `~/.config/image-editor-loko/prefs.json`
 
-## Alternative: GNOME Shell panel icon
+## Icônes
 
-Quick Image Editor started life as a GNOME Shell extension that adds a
-launcher icon to the top panel instead of installing a standalone app.
-`extension.js` and `metadata.json` still provide that, for anyone who
-prefers it:
+Les icônes de la barre d'outils sont attendues dans un dossier `icons/` à
+côté du script (`icons/<nom>.png`). Si une icône est absente, un caractère
+de repli s'affiche à la place — l'application ne plante pas pour autant.
 
-```bash
-git clone https://github.com/Lokoyote/image-editor.git
-mkdir -p ~/.local/share/gnome-shell/extensions/image-editor@loko.gnome
-cp -r image-editor/{extension.js,metadata.json,image-editor.py,icons} \
-      ~/.local/share/gnome-shell/extensions/image-editor@loko.gnome/
-```
+## Localisation
 
-Then restart GNOME Shell (log out/in on Wayland, or `Alt+F2` → `r` on
-X11) and enable it with the **Extensions** app, or:
+Toutes les chaînes visibles par l'utilisateur (libellés, infobulles,
+dialogues, messages de statut) passent par la fonction `tt(clé)`, qui
+cherche la traduction dans le dictionnaire `UI_STRINGS` (en tête de
+fichier) pour la langue détectée (`UI_LANG`, déduite de la locale système
+via `detect_ui_lang()`), avec repli sur l'anglais puis sur la clé brute si
+rien ne correspond.
 
-```bash
-gnome-extensions enable image-editor@loko.gnome
-```
+Pour ajouter ou modifier un texte : ajouter/éditer l'entrée correspondante
+dans `UI_STRINGS` (une entrée par clé, une traduction par langue parmi
+`fr/en/es/de/it/pt`), puis l'utiliser via `tt('ma_cle')` dans le code —
+jamais de chaîne codée en dur pour un texte destiné à l'utilisateur.
 
-This mode is independent from `install.sh` — the two can coexist, though
-there's little reason to run both.
+## Structure du code (repères pour s'y retrouver)
 
-## Usage
+- `UI_STRINGS` / `tt()` — dictionnaire de traductions et fonction de lookup
+- `Canvas` — une image ouverte : ses calques, ses annotations, sa pile
+  d'annulation, son niveau de zoom ; un `Canvas` par onglet
+- `EditorWindow` — fenêtre principale : onglets, barre d'en-tête, barre
+  d'options contextuelle à l'outil/la sélection, panneau des calques,
+  dialogues (taille du canevas, texte, aide, presse-papiers…)
+- `LayersPanel` — liste de droite (sections Objets/Calques) ; `refresh()`
+  reconstruit les lignes à partir de l'état du `Canvas` à chaque changement
+- Sauvegarde automatique : `autosave_dir()`, `list_leftover_autosaves()`,
+  format JSON interne (pas destiné à être ouvert manuellement)
 
-Open the editor from the applications grid, the `loko-image-editor`
-command, or by right-clicking an image in Nautilus. Use the header bar's
-open button (or `Ctrl+O`) to load an image into a new tab.
+## Statut
 
-If the editor is already running, opening it again won't spawn a second
-window — it brings the existing one to the front instead. Each image you
-open lands in a new tab of that same window.
-
-### Tools
-
-| Tool | Description |
-|---|---|
-| Select | Select, move, resize (layers and shapes) |
-| Crop | Drag an area, then `Enter` to confirm or `Esc` to cancel |
-| Flip horizontal / vertical | Mirror the image |
-| Rotate 90° | Rotate the image |
-| Canvas Size | Enlarge or shrink the workspace *without* resizing the base image — pick new dimensions and where to anchor the image within them |
-| Arrow / Line | Endpoint handles let you adjust length and angle once selected |
-| Shapes | One button opens a choice: rectangle, circle, or polygon (click to place points, `Enter` to close and fill) |
-| Text | Click to place, double-click to edit; optional background fill |
-| Blur / Pixelate | Obscure a region (face, license plate, sensitive text…); intensity is adjustable |
-| Add Image | Stack another image as a movable, resizable, opacity-adjustable layer |
-| Paste as Layer | Paste an image from the clipboard as a new layer — works with copied image data, with images copied in Nautilus or another file manager, and with the usual URI/file clipboard formats. Greyed out automatically when there's nothing pasteable |
-
-Selecting an already-placed shape lets you edit its color, fill, stroke
-width (down to 0 — no border) and other properties live from the options
-bar, instead of deleting and redrawing it.
-
-**Keeping proportions while resizing:** grab the handle of a layer or a
-rectangle/circle and hold `Ctrl` or `Shift` while dragging to scale it
-while keeping its original aspect ratio.
-
-Selected objects can also be nudged with the arrow keys (1px, or 10px
-with `Shift`), in addition to dragging with the mouse.
-
-### Keyboard Shortcuts
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl+O` | Open |
-| `Ctrl+S` | Save |
-| `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
-| `Delete` | Remove selection |
-| Arrow keys | Nudge selection (`Shift` = 10px) |
-| `Ctrl`/`Shift` while resizing | Keep aspect ratio |
-| `Esc` | Cancel current crop/shape, switch to Select |
-| `Enter` | Confirm crop or close a polygon |
-
-### Autosave & Crash Recovery
-
-Every open tab is autosaved periodically to
-`~/.cache/image-editor-loko/autosave/`. If the app didn't close cleanly
-last time (crash, power loss…), it offers to recover those tabs on the
-next launch.
-
-Thumbnails staying fresh in the file manager: after every save, the
-editor also clears any cached thumbnail for that file from
-`~/.cache/thumbnails/`, so Nautilus doesn't keep showing a stale preview.
-
-### Localization
-
-Tooltips on the tool icons are shown in French, English, Spanish, German,
-Italian or Portuguese depending on your system locale, falling back to
-English. The rest of the interface (menus, dialogs, status messages) is
-in English.
-
-## Troubleshooting
-
-Run the editor directly from a terminal to see the real error:
-
-```bash
-loko-image-editor --blank
-```
-
-Common culprits: missing PyGObject/pycairo, or a network hiccup during
-install/update (re-run `install.sh`, or `~/.local/share/loko-image-editor/update.sh`).
-
-## Uninstalling
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Lokoyote/image-editor/main/uninstall.sh)
-```
-
-Or, if you already have the repo cloned locally: `bash uninstall.sh`.
-This removes the app, the launcher, the icon, the `.desktop` entry, the
-Nautilus script, and the update checker (including its autostart entry).
-Nothing system-wide is ever touched.
-
-If you used the [panel-icon alternative](#alternative-gnome-shell-panel-icon)
-instead:
-
-```bash
-gnome-extensions uninstall image-editor@loko.gnome
-```
-
-## Contributing
-
-Issues and pull requests welcome. Since this is a two-file project
-(`extension.js` for the optional Shell integration, `image-editor.py` for
-the actual editor), most contributions will only touch one of the two.
-
-## License
-
-GNU General Public License v3.0 — see [LICENSE](LICENSE).
+Projet personnel, en évolution continue au fil des besoins — pas de
+versionnage formel ni de suite de tests automatisés à ce jour.

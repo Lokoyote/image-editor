@@ -45,11 +45,17 @@ MODE="install"
 [ "${1:-}" = "--update" ] && MODE="update"
 [ "${1:-}" = "--uninstall" ] && MODE="uninstall"
 
+# When install.sh is run as a real file (e.g. `bash install.sh` from a
+# git clone or a folder you're hacking on locally) rather than piped in
+# via `bash <(curl ...)`, $BASH_SOURCE points at that file and
+# SCRIPT_DIR is the folder it lives in. If that folder also has
+# image-editor.py right next to it, that's a local checkout the user
+# clearly wants installed as-is — so fetch_source() below uses it
+# instead of downloading main from GitHub. Piped installs have no real
+# on-disk script path (SCRIPT_DIR ends up empty/unreadable), so they
+# fall through to the GitHub download exactly as before.
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
-SCRIPT_DIR=""
-if [ -n "$SCRIPT_SOURCE" ] && [ -f "$SCRIPT_SOURCE" ]; then
-    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
-fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" 2>/dev/null && pwd || true)"
 
 log() { echo "$@"; }
 
@@ -149,12 +155,22 @@ show_install_options() {
 }
 
 # ---------------------------------------------------------------------
-# 2. Fetch the repository into a temp dir.
+# 2. Fetch the repository into a temp dir — from the local checkout
+#    next to install.sh if there is one (see SCRIPT_DIR above),
+#    otherwise from GitHub as before.
 # ---------------------------------------------------------------------
 fetch_source() {
     local dest="$1"
     rm -rf "$dest"
     mkdir -p "$dest"
+
+    if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/image-editor.py" ]; then
+        log "Using the local copy in $SCRIPT_DIR (not GitHub)..."
+        cp -a "$SCRIPT_DIR/." "$dest/"
+        rm -rf "$dest/.git"
+        USED_LOCAL_SOURCE=1
+        return 0
+    fi
 
     if command -v git >/dev/null 2>&1; then
         log "Downloading via git..."
@@ -197,11 +213,7 @@ get_remote_sha() {
 deploy_app() {
     local src="$1"
     mkdir -p "$INSTALL_DIR"
-    if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/image-editor.py" ]; then
-        cp -f "$SCRIPT_DIR/image-editor.py" "$INSTALL_DIR/"
-    else
-        cp -f "$src/image-editor.py" "$INSTALL_DIR/"
-    fi
+    cp -f "$src/image-editor.py" "$INSTALL_DIR/"
     rm -rf "$INSTALL_DIR/icons" "$INSTALL_DIR/appicon"
     cp -r "$src/icons" "$INSTALL_DIR/icons"
     [ -d "$src/appicon" ] && cp -r "$src/appicon" "$INSTALL_DIR/appicon"
@@ -555,9 +567,14 @@ fi
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
+USED_LOCAL_SOURCE=0
 fetch_source "$WORKDIR/src"
 
-REMOTE_SHA="$(get_remote_sha)"
+if [ "$USED_LOCAL_SOURCE" -eq 1 ]; then
+    REMOTE_SHA=""
+else
+    REMOTE_SHA="$(get_remote_sha)"
+fi
 
 deploy_app "$WORKDIR/src"
 [ -n "$REMOTE_SHA" ] && echo "$REMOTE_SHA" > "$INSTALL_DIR/.installed_ref"
